@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Angel Valverde - Análizador de errores léxicos</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@500;700;900&family=JetBrains+Mono:wght@400;600&family=Inter:wght@400;600;800&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#050816; --panel:#0b1230cc; --panel2:#0f1a3d; --line:#1f2d5c;
+    --cyan:#22d3ee; --mag:#f472b6; --green:#4ade80; --red:#f87171; --amber:#fbbf24;
+    --text:#e2e8f0; --muted:#8b9ac7;
+    --mono:'JetBrains Mono',ui-monospace,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;min-height:100%;background:var(--bg);color:var(--text);font-family:'Inter',system-ui,sans-serif}
+  body{overflow-x:hidden}
+  /* ---------- Fondo espacial ---------- */
+  #stars{position:fixed;inset:0;z-index:0;pointer-events:none}
+  .nebula{position:fixed;inset:-20%;z-index:0;pointer-events:none;
+    background:radial-gradient(40% 35% at 20% 20%,#3b0764aa,transparent 70%),
+               radial-gradient(35% 30% at 85% 30%,#0e749088,transparent 70%),
+               radial-gradient(40% 40% at 60% 95%,#83184366,transparent 70%);
+    animation:drift 40s ease-in-out infinite alternate}
+  @keyframes drift{to{transform:translate(4%,-3%) rotate(3deg)}}
+  .wrap{position:relative;z-index:1;max-width:1250px;margin:0 auto;padding:28px 20px 60px}
+
+  /* ---------- Cabecera ---------- */
+  header{display:flex;align-items:center;gap:22px;margin-bottom:26px;flex-wrap:wrap}
+  .radar{width:78px;height:78px;border-radius:50%;flex:none;position:relative;
+    border:2px solid var(--cyan);box-shadow:0 0 25px #22d3ee66, inset 0 0 20px #22d3ee33;
+    background:repeating-radial-gradient(circle,transparent 0 12px,#22d3ee22 12px 13px)}
+  .radar::before{content:"";position:absolute;inset:0;border-radius:50%;
+    background:conic-gradient(from 0deg,#22d3ee99,transparent 25%);animation:spin 2.6s linear infinite}
+  .radar::after{content:"🔍";position:absolute;inset:0;display:grid;place-items:center;font-size:30px}
+  @keyframes spin{to{transform:rotate(360deg)}}
+  h1{font-family:'Orbitron',sans-serif;font-weight:900;margin:0;font-size:clamp(22px,3.4vw,38px);line-height:1.15;
+    background:linear-gradient(90deg,var(--cyan),#a78bfa,var(--mag));-webkit-background-clip:text;background-clip:text;color:transparent;
+    filter:drop-shadow(0 0 14px #22d3ee44)}
+  .subtitle{color:var(--muted);margin-top:6px;font-size:15px}
+  .subtitle b{color:var(--cyan)}
+
+  /* ---------- Paneles ---------- */
+  .grid{display:grid;grid-template-columns:1.25fr 1fr;gap:22px}
+  @media(max-width:960px){.grid{grid-template-columns:1fr}}
+  .panel{background:var(--panel);border:1px solid var(--line);border-radius:18px;padding:20px;
+    backdrop-filter:blur(8px);box-shadow:0 10px 40px #0008}
+  .panel h2{font-family:'Orbitron',sans-serif;font-size:15px;letter-spacing:2px;text-transform:uppercase;
+    color:var(--cyan);margin:0 0 14px;display:flex;align-items:center;gap:8px}
+
+  /* ---------- Selector de lenguaje ---------- */
+  .langs{display:flex;gap:10px;margin-bottom:14px;flex-wrap:wrap}
+  .lang-btn{flex:1;min-width:120px;cursor:pointer;border:1px solid var(--line);background:var(--panel2);color:var(--text);
+    padding:12px 10px;border-radius:12px;font-weight:700;font-size:15px;transition:.2s;display:flex;align-items:center;justify-content:center;gap:8px}
+  .lang-btn:hover{border-color:var(--cyan);transform:translateY(-2px)}
+  .lang-btn.active{border-color:var(--cyan);background:linear-gradient(135deg,#0e7490,#4c1d95);box-shadow:0 0 18px #22d3ee55}
+
+  /* ---------- Editor ---------- */
+  .editor-wrap{position:relative;display:flex;border:1px solid var(--line);border-radius:14px;overflow:hidden;background:#030614;min-height:260px}
+  .gutter{font-family:var(--mono);font-size:14px;line-height:1.6;padding:14px 10px;color:#3d4d80;text-align:right;user-select:none;
+    background:#060b22;border-right:1px solid var(--line);min-width:44px;overflow:hidden;white-space:pre}
+  textarea{flex:1;resize:vertical;min-height:260px;border:0;outline:0;background:transparent;color:#d6e2ff;
+    font-family:var(--mono);font-size:14px;line-height:1.6;padding:14px;white-space:pre;overflow:auto;tab-size:4}
+  textarea::placeholder{color:#3d4d80}
+  .editor-wrap.scanning::before{content:"";position:absolute;inset:0;pointer-events:none;z-index:2;
+    background:linear-gradient(#22d3ee10 1px,transparent 1px) 0 0/100% 22px,linear-gradient(90deg,#22d3ee10 1px,transparent 1px) 0 0/22px 100%;
+    animation:gridpulse .6s ease-in-out infinite alternate}
+  .editor-wrap.scanning::after{content:"";position:absolute;left:0;right:0;height:70px;top:-70px;z-index:3;pointer-events:none;
+    background:linear-gradient(transparent,#22d3ee33 70%,#22d3ee);border-bottom:2px solid #a5f3fc;
+    box-shadow:0 6px 25px #22d3ee;animation:laser 1s linear infinite}
+  @keyframes laser{to{top:100%}}
+  @keyframes gridpulse{to{opacity:.4}}
+
+  .toolbar{display:flex;gap:10px;margin-top:14px;flex-wrap:wrap;align-items:center}
+  .btn-scan{flex:1;min-width:220px;cursor:pointer;border:0;border-radius:14px;padding:16px 20px;font-family:'Orbitron',sans-serif;
+    font-weight:900;font-size:17px;letter-spacing:2px;color:#020617;background:linear-gradient(90deg,var(--cyan),#a78bfa,var(--mag));
+    background-size:200% 100%;box-shadow:0 0 25px #22d3ee66;transition:.25s;position:relative;overflow:hidden}
+  .btn-scan:hover{background-position:100% 0;transform:translateY(-2px);box-shadow:0 0 40px #f472b688}
+  .btn-scan:disabled{cursor:wait;filter:saturate(.6)}
+  .btn-scan:disabled::after{content:"";position:absolute;inset:0;background:linear-gradient(90deg,transparent,#fff8,transparent);animation:shine 1s infinite}
+  @keyframes shine{from{transform:translateX(-100%)}to{transform:translateX(100%)}}
+  .btn-ghost{cursor:pointer;border:1px solid var(--line);background:transparent;color:var(--muted);padding:14px 16px;border-radius:12px;font-weight:600}
+  .btn-ghost:hover{color:var(--text);border-color:var(--muted)}
+  .hint{color:var(--muted);font-size:12px;margin-top:8px}
+  kbd{font-family:var(--mono);background:#1e293b;border:1px solid #334155;border-radius:5px;padding:1px 6px;font-size:11px}
+
+  .examples{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}
+  .chip-ex{cursor:pointer;border:1px dashed #334a8a;background:#0a1435;color:#c7d2fe;padding:8px 12px;border-radius:999px;font-size:13px;transition:.2s}
+  .chip-ex:hover{border-style:solid;border-color:var(--mag);color:#fff;transform:scale(1.04)}
+
+  /* ---------- Estado de escaneo ---------- */
+  .status{font-family:var(--mono);font-size:13px;color:var(--cyan);min-height:20px;margin-top:10px}
+  .status .dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--cyan);margin-right:8px;animation:blink .5s infinite alternate}
+  @keyframes blink{to{opacity:.2}}
+
+  /* ---------- Veredictos ---------- */
+  .verdicts{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:16px}
+  @media(max-width:600px){.verdicts{grid-template-columns:1fr}}
+  .verdict{border-radius:16px;padding:16px;border:2px solid var(--line);background:var(--panel2);position:relative;overflow:hidden;
+    animation:pop .5s cubic-bezier(.2,1.6,.4,1) both}
+  .verdict .tag{font-family:'Orbitron',sans-serif;font-size:11px;letter-spacing:2px;opacity:.85}
+  .verdict .big{font-family:'Orbitron',sans-serif;font-weight:900;font-size:19px;margin:6px 0 8px}
+  .verdict p{margin:0;font-size:13.5px;line-height:1.5;color:#cbd5e1}
+  .verdict.ok{border-color:var(--green);background:linear-gradient(135deg,#052e1a,#0b1a33);box-shadow:0 0 25px #4ade8044}
+  .verdict.ok .big{color:var(--green)}
+  .verdict.bad{border-color:var(--red);background:linear-gradient(135deg,#3b0a0a,#1a0b22);box-shadow:0 0 30px #f8717166;animation:pop .5s both, alarm 1s ease-in-out 3}
+  .verdict.bad .big{color:var(--red)}
+  .verdict.warn{border-color:var(--amber);background:linear-gradient(135deg,#3a2504,#1a1430);box-shadow:0 0 25px #fbbf2444}
+  .verdict.warn .big{color:var(--amber)}
+  .verdict.idle{opacity:.6;border-style:dashed}
+  .verdict.idle .big{color:var(--muted)}
+  @keyframes pop{from{transform:scale(.85);opacity:0}}
+  @keyframes alarm{50%{box-shadow:0 0 60px #f87171cc;border-color:#fecaca}}
+  .placeholder{color:var(--muted);text-align:center;padding:40px 10px;line-height:1.7}
+  .placeholder .ufo{font-size:54px;display:block;animation:float 3s ease-in-out infinite}
+  @keyframes float{50%{transform:translateY(-10px) rotate(-4deg)}}
+
+  .section-title{font-family:'Orbitron',sans-serif;font-size:12px;letter-spacing:2px;color:var(--muted);margin:18px 0 10px;text-transform:uppercase}
+
+  /* ---------- Lista de errores / advertencias ---------- */
+  .issue{border-left:4px solid var(--red);background:#2a0d14aa;border-radius:10px;padding:12px 14px;margin-bottom:10px;animation:slide .4s both}
+  .issue.syn{border-left-color:var(--amber);background:#2a1d06aa}
+  .issue .head{display:flex;gap:10px;align-items:center;flex-wrap:wrap;font-weight:800;font-size:14px}
+  .issue .where{font-family:var(--mono);font-size:12px;color:var(--muted);font-weight:400}
+  .issue .sym{font-family:var(--mono);background:#000a;border:1px solid var(--red);color:#fecaca;padding:2px 8px;border-radius:6px}
+  .issue.syn .sym{border-color:var(--amber);color:#fde68a}
+  .issue .body{font-size:13px;color:#e2e8f0;margin-top:6px;line-height:1.55}
+  .issue .delta{font-family:var(--mono);font-size:12px;color:#fca5a5;margin-top:6px;opacity:.9}
+  @keyframes slide{from{transform:translateX(-14px);opacity:0}}
+
+  /* ---------- Vista resaltada ---------- */
+  .scanview{font-family:var(--mono);font-size:13.5px;line-height:1.7;background:#030614;border:1px solid var(--line);border-radius:12px;
+    padding:12px 0;overflow:auto;max-height:340px}
+  .scanview .ln{display:flex}
+  .scanview .ln .n{color:#3d4d80;min-width:42px;text-align:right;padding-right:12px;user-select:none;flex:none}
+  .scanview .ln .c{white-space:pre;padding-right:14px}
+  .scanview .ln.has-err{background:#f8717114}
+  .t-keyword{color:#c084fc;font-weight:600}.t-identifier{color:#e2e8f0}.t-number{color:#fb923c}.t-string{color:#86efac}
+  .t-operator{color:#22d3ee}.t-delimiter{color:#94a3b8}.t-comment{color:#64748b;font-style:italic}
+  .t-decorator,.t-preprocessor{color:#f472b6}
+  .t-error{color:#fff;background:#dc2626;border-radius:3px;outline:2px solid #f87171;animation:errpulse 1s infinite alternate;cursor:help}
+  @keyframes errpulse{to{background:#7f1d1d;outline-color:#fecaca}}
+
+  /* ---------- Fichas de tokens ---------- */
+  .tokens{display:flex;flex-wrap:wrap;gap:6px;max-height:230px;overflow:auto;padding:4px}
+  .tok{font-family:var(--mono);font-size:12px;border-radius:8px;padding:4px 8px;border:1px solid;display:flex;flex-direction:column;
+    align-items:center;gap:1px;animation:tokin .35s both}
+  .tok small{font-family:'Inter';font-size:9px;letter-spacing:1px;text-transform:uppercase;opacity:.75}
+  .tok.k-keyword{border-color:#c084fc66;color:#e9d5ff;background:#3b0764aa}
+  .tok.k-identifier{border-color:#94a3b866;color:#f1f5f9;background:#1e293baa}
+  .tok.k-number{border-color:#fb923c66;color:#fed7aa;background:#431407aa}
+  .tok.k-string{border-color:#86efac66;color:#bbf7d0;background:#052e16aa}
+  .tok.k-operator{border-color:#22d3ee66;color:#a5f3fc;background:#083344aa}
+  .tok.k-delimiter{border-color:#94a3b866;color:#cbd5e1;background:#0f172aaa}
+  .tok.k-decorator,.tok.k-preprocessor{border-color:#f472b666;color:#fbcfe8;background:#500724aa}
+  .tok.k-error{border-color:#f87171;color:#fff;background:#991b1b;box-shadow:0 0 12px #f8717188}
+  @keyframes tokin{from{transform:translateY(8px) scale(.7);opacity:0}}
+
+  .stats{display:flex;flex-wrap:wrap;gap:8px}
+  .stat{background:var(--panel2);border:1px solid var(--line);border-radius:10px;padding:8px 12px;font-size:12px;color:var(--muted)}
+  .stat b{display:block;font-family:'Orbitron';font-size:18px;color:var(--text)}
+
+  /* ---------- Alfabeto y teoría ---------- */
+  .alpha-row{margin-bottom:10px;font-size:13px}
+  .alpha-row .lbl{color:var(--muted);font-size:11px;letter-spacing:1px;text-transform:uppercase;margin-bottom:5px}
+  .sym-list{display:flex;flex-wrap:wrap;gap:5px}
+  .sym-list span{font-family:var(--mono);font-size:12px;padding:3px 7px;border-radius:6px;background:#083344;border:1px solid #155e75;color:#a5f3fc}
+  .sym-list.bad span{background:#450a0a;border-color:#991b1b;color:#fecaca}
+  .theory{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-top:22px}
+  @media(max-width:760px){.theory{grid-template-columns:1fr}}
+  .theory .card{border-radius:14px;padding:16px;border:1px solid var(--line);background:var(--panel2);font-size:13.5px;line-height:1.6}
+  .theory .card h3{margin:0 0 6px;font-family:'Orbitron';font-size:14px}
+  .theory .lex h3{color:var(--cyan)} .theory .syn h3{color:var(--amber)}
+  .theory code{font-family:var(--mono);background:#000a;padding:1px 6px;border-radius:5px;font-size:12.5px}
+  footer{text-align:center;color:#475569;font-size:12px;margin-top:30px}
+</style>
+</head>
+<body>
+<canvas id="stars"></canvas>
+<div class="nebula"></div>
+
+<div class="wrap">
+  <header>
+    <div class="radar" aria-hidden="true"></div>
+    <div>
+      <h1>Angel Valverde - Análizador de errores léxicos</h1>
+      <div class="subtitle">🛸 Escáner espacial · <b>Detective de Código</b> · Detecta símbolos que <b>no pertenecen al alfabeto Σ</b> del lenguaje</div>
+    </div>
+  </header>
+
+  <div class="grid">
+    <!-- ================= PANEL IZQUIERDO: ENTRADA ================= -->
+    <section class="panel">
+      <h2>🧬 1. Elige el lenguaje objetivo</h2>
+      <div class="langs" id="langs"></div>
+
+      <h2 style="margin-top:6px">📡 2. Introduce la evidencia (código)</h2>
+      <div class="editor-wrap" id="editorWrap">
+        <div class="gutter" id="gutter">1</div>
+        <textarea id="code" spellcheck="false" placeholder="Escribe o pega aquí tu fragmento de código…&#10;Prueba con:  @   o   20+*5"></textarea>
+      </div>
+
+      <div class="toolbar">
+        <button class="btn-scan" id="scanBtn">🔎 ANALIZAR</button>
+        <button class="btn-ghost" id="clearBtn" title="Limpiar">🧹 Limpiar</button>
+      </div>
+      <div class="hint">Atajo: <kbd>Ctrl</kbd>/<kbd>⌘</kbd> + <kbd>Enter</kbd></div>
+      <div class="status" id="status"></div>
+
+      <div class="section-title">🧪 Casos de prueba rápidos</div>
+      <div class="examples" id="examples"></div>
+
+      <div class="section-title">🔤 Alfabeto Σ del lenguaje seleccionado</div>
+      <div id="alphabet"></div>
+    </section>
+
+    <!-- ================= PANEL DERECHO: RESULTADOS ================= -->
+    <section class="panel">
+      <h2>🧾 3. Informe del detective</h2>
+      <div id="results">
+        <div class="placeholder"><span class="ufo">🛸</span>
+          El escáner está en órbita esperando evidencia.<br>Escribe código y pulsa <b>ANALIZAR</b>.</div>
+      </div>
+    </section>
+  </div>
+
+  <!-- ================= TEORÍA ================= -->
+  <div class="theory">
+    <div class="card lex">
+      <h3>🔤 Análisis LÉXICO (lo que juzga este escáner)</h3>
+      El analizador léxico lee <b>carácter por carácter</b> y los agrupa en <i>tokens</i> (palabras reservadas, identificadores,
+      números, cadenas, operadores, delimitadores) usando autómatas finitos. Si encuentra un carácter para el que
+      <b>no existe transición</b> desde el estado actual — <code>δ(q, c) = ∅</code> — hay un <b style="color:var(--red)">error léxico</b>.<br>
+      Ejemplo en Python: <code>precio = $20</code> → el <code>$</code> no pertenece a Σ.
+    </div>
+    <div class="card syn">
+      <h3>🧩 Análisis SINTÁCTICO (otra etapa)</h3>
+      El analizador sintáctico recibe los tokens ya válidos y comprueba que su <b>orden</b> respete la gramática.
+      <code>20+*5</code> tiene solo símbolos válidos (<code>20</code>, <code>+</code>, <code>*</code>, <code>5</code>), así que
+      <b style="color:var(--green)">no hay error léxico</b>, pero <code>+</code> seguido de <code>*</code> rompe la gramática:
+      eso es un <b style="color:var(--amber)">error sintáctico</b>. Es como escribir “el el gato” en lugar de “g@to”.
+    </div>
+  </div>
+
+  <footer>Angel Valverde · Act. 4 – Errores Léxicos · Teoría de Autómatas</footer>
+</div>
+
+<script>
+/* =====================================================================
+   1. DEFINICIÓN DE LOS LENGUAJES (alfabetos, tokens y reglas)
+   ===================================================================== */
+const byLen = arr => [...arr].sort((a, b) => b.length - a.length);
+
+const LANGS = {
+  python: {
+    label: 'Python', icon: '🐍',
+    keywords: ['False','None','True','and','as','assert','async','await','break','class','continue','def','del','elif','else',
+      'except','finally','for','from','global','if','import','in','is','lambda','nonlocal','not','or','pass','raise','return',
+      'try','while','with','yield'],
+    valueKeywords: ['True','False','None'],
+    operators: byLen(['**=','//=','>>=','<<=','->',':=','**','//','==','!=','<=','>=','<<','>>','+=','-=','*=','/=','%=',
+      '&=','|=','^=','@=','+','-','*','/','%','<','>','=','&','|','^','~']),
+    delimiters: ['(',')','[',']','{','}',',',':',';','.'],
+    unary: ['+','-','~'],
+    postfix: [],
+    ws: /[ \t\n\r\f\v]/,
+    lineComment: '#', blockComment: null,
+    idStart: /[\p{L}_]/u, idPart: /[\p{L}\p{N}_]/u,
+    number: /^(?:0[xX][0-9a-fA-F_]+|0[bB][01_]+|0[oO][0-7_]+|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d[\d_]*)?[jJ]?)/,
+    stringPrefix: /^(?:[rR][bBfF]|[bBfF][rR]|[rRbBuUfF])(?=['"])/,
+    quotes: ['"""', "'''", '"', "'"], multiline: ['"""', "'''"],
+    lineContinuation: true,
+    invalid: {
+      '$': 'En Python el signo "$" no forma parte de ningún token: no inicia identificadores, números ni operadores. (En PHP o JavaScript sí sería válido, ¡pero aquí no!)',
+      '?': 'Python no tiene operador ternario con "?" (usa "x if cond else y"). El carácter "?" no pertenece a su alfabeto.',
+      '`': 'Las comillas invertidas (backticks) se eliminaron en Python 3. Hoy no forman ningún token.',
+      '!': 'En Python el "!" solo existe dentro del operador "!=". Suelto no es un token válido (para negar se usa la palabra "not").',
+      '\\': 'La barra invertida fuera de una cadena solo es válida como continuación de línea (justo antes de un salto de línea).'
+    },
+    badSamples: ['$', '?', '`', '! (solo)', '@ (suelto)', '“ ”', '🚀']
+  },
+  javascript: {
+    label: 'JavaScript', icon: '🟨',
+    keywords: ['break','case','catch','class','const','continue','debugger','default','delete','do','else','export','extends',
+      'false','finally','for','function','if','import','in','instanceof','let','new','null','return','super','switch','this',
+      'throw','true','try','typeof','var','void','while','with','yield','async','await','of','static','undefined'],
+    valueKeywords: ['true','false','null','undefined','this','super'],
+    operators: byLen(['>>>=','...','===','!==','**=','<<=','>>=','>>>','&&=','||=','??=','=>','==','!=','<=','>=','&&','||',
+      '??','?.','++','--','+=','-=','*=','/=','%=','&=','|=','^=','**','<<','>>','+','-','*','/','%','<','>','=','!','&',
+      '|','^','~','?']),
+    delimiters: ['(',')','[',']','{','}',',',':',';','.'],
+    unary: ['+','-','!','~','++','--','...'],
+    postfix: ['++','--'],
+    ws: /[\s\uFEFF]/,
+    lineComment: '//', blockComment: ['/*', '*/'],
+    idStart: /[\p{L}_$]/u, idPart: /[\p{L}\p{N}_$]/u,
+    number: /^(?:0[xX][0-9a-fA-F_]+n?|0[bB][01_]+n?|0[oO][0-7_]+n?|(?:\d[\d_]*\.?[\d_]*|\.\d[\d_]*)(?:[eE][+-]?\d+)?n?)/,
+    quotes: ['`', '"', "'"], multiline: ['`'],
+    regexLiteral: true,
+    invalid: {
+      '@': 'En JavaScript estándar el "@" no forma parte de ningún token (los decoradores aún son una propuesta, no parte del lenguaje base). Suelto o en medio de una expresión, el escáner no puede reconocerlo.',
+      '#': 'En JavaScript el "#" solo es válido pegado a un nombre para campos privados de clase (#saldo) o como "#!" en la primera línea. Suelto no forma un token.',
+      '\\': 'La barra invertida solo tiene significado dentro de cadenas o expresiones regulares. Fuera de ellas no forma ningún token.'
+    },
+    badSamples: ['@', '# (suelto)', '\\ (fuera de cadena)', '“ ”', '🚀']
+  },
+  cpp: {
+    label: 'C++', icon: '⚙️',
+    keywords: ['alignas','alignof','and','auto','bool','break','case','catch','char','char8_t','char16_t','char32_t','class',
+      'concept','const','consteval','constexpr','constinit','const_cast','continue','co_await','co_return','co_yield','decltype',
+      'default','delete','do','double','dynamic_cast','else','enum','explicit','export','extern','false','float','for','friend',
+      'goto','if','inline','int','long','mutable','namespace','new','noexcept','not','nullptr','operator','or','private',
+      'protected','public','register','reinterpret_cast','requires','return','short','signed','sizeof','static','static_assert',
+      'static_cast','struct','switch','template','this','thread_local','throw','true','try','typedef','typeid','typename',
+      'union','unsigned','using','virtual','void','volatile','wchar_t','while','xor'],
+    valueKeywords: ['true','false','nullptr','this'],
+    operators: byLen(['<<=','>>=','<=>','->*','...','::','->','.*','++','--','==','!=','<=','>=','&&','||','<<','>>','+=','-=',
+      '*=','/=','%=','&=','|=','^=','+','-','*','/','%','<','>','=','!','&','|','^','~','?','##','#']),
+    delimiters: ['(',')','[',']','{','}',',',':',';','.'],
+    unary: ['+','-','!','~','*','&','++','--','::','...'],
+    postfix: ['++','--'],
+    ws: /[ \t\n\r\f\v]/,
+    lineComment: '//', blockComment: ['/*', '*/'],
+    idStart: /[\p{L}_]/u, idPart: /[\p{L}\p{N}_]/u,
+    number: /^(?:0[xX][0-9a-fA-F']+|0[bB][01']+|(?:\d[\d']*\.?[\d']*|\.\d[\d']*)(?:[eE][+-]?\d+)?)(?:[uU](?:ll|LL|l|L)?|(?:ll|LL|l|L)[uU]?|[fFlL])?/,
+    quotes: ['"', "'"], multiline: [],
+    preprocessor: true, lineContinuation: true,
+    invalid: {
+      '@': 'El "@" no pertenece al conjunto básico de caracteres de C++. No inicia ningún identificador, literal ni operador.',
+      '$': 'El "$" no está en el alfabeto estándar de C++ (algunos compiladores como GCC lo aceptan como extensión en identificadores, pero no es C++ estándar).',
+      '`': 'C++ no usa comillas invertidas. Las cadenas van entre "comillas dobles" y los caracteres entre \'simples\'.',
+      '\\': 'Fuera de una cadena, la barra invertida solo es válida como continuación de línea (al final de la línea, típico en macros).'
+    },
+    badSamples: ['@', '$', '`', '“ ”', '🚀']
+  }
+};
+
+const SMART_QUOTES = '“”‘’«»„‚';
+const TYPE_LABEL = { keyword:'reservada', identifier:'identificador', number:'número', string:'cadena', operator:'operador',
+  delimiter:'delimitador', comment:'comentario', error:'ERROR', decorator:'decorador', preprocessor:'preprocesador' };
+
+/* =====================================================================
+   2. ANALIZADOR LÉXICO (autómata finito implementado a mano)
+   ===================================================================== */
+function lex(src, langKey) {
+  const L = LANGS[langKey];
+  const tokens = [], errors = [];
+  const n = src.length;
+  const lineStarts = [0];
+  for (let k = 0; k < n; k++) if (src[k] === '\n') lineStarts.push(k + 1);
+
+  const pos = idx => {
+    let lo = 0, hi = lineStarts.length - 1;
+    while (lo < hi) { const mid = (lo + hi + 1) >> 1; if (lineStarts[mid] <= idx) lo = mid; else hi = mid - 1; }
+    return { line: lo + 1, col: idx - lineStarts[lo] + 1 };
+  };
+  const atLineStart = idx => { let k = idx - 1; while (k >= 0 && (src[k] === ' ' || src[k] === '\t')) k--; return k < 0 || src[k] === '\n'; };
+  const charAt = idx => idx < n ? String.fromCodePoint(src.codePointAt(idx)) : '';
+  const lastSig = () => { for (let k = tokens.length - 1; k >= 0; k--) if (!['ws','comment'].includes(tokens[k].type)) return tokens[k]; return null; };
+  const isOperand = t => t && (['identifier','number','string'].includes(t.type) ||
+    (t.type === 'delimiter' && [')',']','}'].includes(t.value)) || (t.type === 'keyword' && L.valueKeywords.includes(t.value)));
+  const add = (type, s, e, extra = {}) => { const p = pos(s); const t = { type, value: src.slice(s, e), start: s, end: e, line: p.line, col: p.col, ...extra }; tokens.push(t); return t; };
+  const addErr = (s, e, title, detail, delta = true) => errors.push(add('error', s, e, { title, detail, delta }));
+
+  let i = 0;
+  while (i < n) {
+    const c = src[i];
+    const ch = charAt(i);
+
+    // --- Espacios en blanco ---
+    if (L.ws.test(c)) { let j = i; while (j < n && L.ws.test(src[j])) j++; add('ws', i, j); i = j; continue; }
+
+    // --- Continuación de línea con "\" ---
+    if (c === '\\' && L.lineContinuation) {
+      const m = /^\\[ \t]*\r?\n/.exec(src.slice(i, i + 40));
+      if (m) { add('ws', i, i + m[0].length); i += m[0].length; continue; }
+    }
+
+    // --- Comentarios ---
+    if (L.lineComment && src.startsWith(L.lineComment, i)) { let j = src.indexOf('\n', i); if (j < 0) j = n; add('comment', i, j); i = j; continue; }
+    if (L.blockComment && src.startsWith(L.blockComment[0], i)) {
+      const j = src.indexOf(L.blockComment[1], i + 2);
+      if (j < 0) { addErr(i, n, 'Comentario sin cerrar', `El comentario abre con "${L.blockComment[0]}" pero nunca encuentra su "${L.blockComment[1]}". El autómata queda atrapado en el estado "dentro de comentario" hasta el final del archivo, sin llegar a un estado de aceptación.`, false); i = n; }
+      else { add('comment', i, j + 2); i = j + 2; }
+      continue;
+    }
+
+    // --- Directivas del preprocesador (C++) ---
+    if (L.preprocessor && c === '#' && atLineStart(i)) {
+      const m = /^#[ \t]*[A-Za-z_]\w*/.exec(src.slice(i, i + 60));
+      if (m) {
+        add('preprocessor', i, i + m[0].length); i += m[0].length;
+        if (/include|import/.test(m[0])) {
+          const h = /^[ \t]*<[^>\n]*>/.exec(src.slice(i, i + 300));
+          if (h) { const w = h[0].length - h[0].trimStart().length; if (w) add('ws', i, i + w); add('string', i + w, i + h[0].length); i += h[0].length; }
+        }
+        continue;
+      }
+    }
+
+    // --- JavaScript: shebang y campos privados #nombre ---
+    if (langKey === 'javascript' && c === '#') {
+      if (i === 0 && src[1] === '!') { let j = src.indexOf('\n'); if (j < 0) j = n; add('comment', 0, j); i = j; continue; }
+      if (L.idStart.test(charAt(i + 1))) { let j = i + 1; while (j < n && L.idPart.test(charAt(j))) j += charAt(j).length; add('identifier', i, j); i = j; continue; }
+    }
+
+    // --- Cadenas de texto ---
+    let sp = 0;
+    if (L.stringPrefix) { const m = L.stringPrefix.exec(src.slice(i, i + 3)); if (m) sp = m[0].length; }
+    const q = L.quotes.find(qq => src.startsWith(qq, i + sp));
+    if (q) {
+      const multi = L.multiline.includes(q);
+      let j = i + sp + q.length, closed = false;
+      while (j < n) {
+        if (src[j] === '\\') { j += 2; continue; }
+        if (src.startsWith(q, j)) { j += q.length; closed = true; break; }
+        if (src[j] === '\n' && !multi) break;
+        j++;
+      }
+      if (closed) add('string', i, j);
+      else addErr(i, Math.min(j, n), 'Cadena sin cerrar', `La cadena abre con ${q} pero no se cierra ${multi ? 'antes del final del código' : 'en la misma línea'}. El autómata de cadenas nunca alcanza su estado de aceptación (la comilla de cierre).`, false);
+      i = Math.min(j, n); continue;
+    }
+
+    // --- Expresiones regulares literales (JavaScript) ---
+    if (L.regexLiteral && c === '/' && !isOperand(lastSig())) {
+      const m = /^\/(?![*/])(?:\\.|\[(?:\\.|[^\]\\\n])*\]|[^/\\\n[])+\/[A-Za-z]*/.exec(src.slice(i, i + 500));
+      if (m) { add('string', i, i + m[0].length); i += m[0].length; continue; }
+    }
+
+    // --- Números (patrón general, no uno por número) ---
+    if (/[0-9]/.test(c) || (c === '.' && /[0-9]/.test(src[i + 1] || ''))) {
+      const m = L.number.exec(src.slice(i, i + 200));
+      let j = i + m[0].length;
+      if (j < n && L.idPart.test(charAt(j))) {
+        let k = j; while (k < n && L.idPart.test(charAt(k))) k += charAt(k).length;
+        addErr(i, k, 'Literal numérico mal formado', `"${src.slice(i, k)}" empieza como número pero continúa con letras. Ningún token puede empezar con dígito y luego tener letras: no es número válido ni identificador válido (los identificadores no pueden comenzar con un dígito).`);
+        i = k;
+      } else { add('number', i, j); i = j; }
+      continue;
+    }
+
+    // --- Identificadores y palabras reservadas ---
+    if (L.idStart.test(ch)) {
+      let j = i; while (j < n && L.idPart.test(charAt(j))) j += charAt(j).length;
+      const w = src.slice(i, j);
+      add(L.keywords.includes(w) ? 'keyword' : 'identifier', i, j); i = j; continue;
+    }
+
+    // --- Python: el "@" depende del contexto ---
+    if (langKey === 'python' && c === '@') {
+      if (src[i + 1] === '=') { add('operator', i, i + 2); i += 2; continue; }
+      let k = i + 1; while (k < n && (src[k] === ' ' || src[k] === '\t')) k++;
+      const nc = charAt(k);
+      if (atLineStart(i) && nc && L.idStart.test(nc)) { add('decorator', i, i + 1); i++; continue; }
+      const prev = lastSig();
+      if (isOperand(prev) && prev.line === pos(i).line && nc && (L.idStart.test(nc) || /[0-9(\[{'"]/.test(nc))) { add('operator', i, i + 1); i++; continue; }
+      addErr(i, i + 1, 'Símbolo "@" suelto', 'En Python el "@" solo sirve como decorador al inicio de una línea (@property) o como multiplicación de matrices entre dos operandos (A @ B). Aquí está suelto, fuera de esos contextos, así que el escáner no puede formar ningún token válido con él.');
+      i++; continue;
+    }
+
+    // --- Operadores y delimitadores (búsqueda del más largo) ---
+    const op = L.operators.find(o => src.startsWith(o, i));
+    const de = L.delimiters.find(d => src.startsWith(d, i));
+    if (op || de) {
+      if ((op ? op.length : 0) >= (de ? de.length : 0)) { add('operator', i, i + op.length); i += op.length; }
+      else { add('delimiter', i, i + de.length); i += de.length; }
+      continue;
+    }
+
+    // --- Ningún patrón acepta el carácter: ERROR LÉXICO ---
+    addErr(i, i + ch.length, `Carácter "${ch}" fuera del alfabeto`, explainChar(ch, L));
+    i += ch.length;
+  }
+  return { tokens, errors };
+}
+
+function explainChar(ch, L) {
+  if (L.invalid[ch]) return L.invalid[ch];
+  if (SMART_QUOTES.includes(ch)) return `"${ch}" es una comilla tipográfica (suele colarse al copiar desde Word o un chat). ${L.label} solo reconoce comillas rectas ${L.quotes.filter(q => q.length === 1).join(' ')} para delimitar cadenas.`;
+  if (/[\u00A0\u200B-\u200D\u2060\uFEFF]/.test(ch)) return `Hay un carácter invisible (U+${ch.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}) que parece un espacio pero no lo es. ${L.label} no lo reconoce como separador válido.`;
+  if (/\p{Extended_Pictographic}/u.test(ch)) return `Los emojis no son letras ni dígitos ni operadores: no pertenecen al alfabeto de ${L.label} fuera de una cadena o comentario.`;
+  return `El carácter "${ch}" no pertenece al alfabeto de ${L.label}. Ningún patrón (identificador, número, operador, delimitador, cadena o comentario) puede empezar con él.`;
+}
+
+/* =====================================================================
+   3. REVISIÓN SINTÁCTICA BÁSICA (solo como "bonus" educativo)
+   ===================================================================== */
+function syntaxCheck(tokens, langKey) {
+  const L = LANGS[langKey];
+  const ppLines = new Set(tokens.filter(t => t.type === 'preprocessor').map(t => t.line));
+  const sig = tokens.filter(t => !['ws','comment','preprocessor'].includes(t.type) && !ppLines.has(t.line));
+  const warns = [];
+  const warn = (sym, t, msg) => warns.push({ sym, line: t.line, col: t.col, msg });
+  const stack = [], pairs = { ')': '(', ']': '[', '}': '{' };
+  const cppPtr = (a, b) => langKey === 'cpp' && ['*','&','&&'].includes(a.value) && b && ['>','>>',')',','].includes(b.value);
+  const pyStar = (prev, t) => langKey === 'python' && ['*','**'].includes(t.value) && prev && ['(',','].includes(prev.value);
+
+  sig.forEach((t, k) => {
+    const prev = sig[k - 1], next = sig[k + 1];
+    if (t.type === 'delimiter') {
+      if ('([{'.includes(t.value)) stack.push(t);
+      else if (pairs[t.value]) {
+        const top = stack.pop();
+        if (!top) warn(t.value, t, `Hay un "${t.value}" de cierre sin su pareja de apertura. ¡Un paréntesis huérfano!`);
+        else if (top.value !== pairs[t.value]) warn(`${top.value} … ${t.value}`, t, `Se abrió "${top.value}" (línea ${top.line}) pero se cerró con "${t.value}". Los símbolos son válidos, pero no combinan.`);
+      }
+    }
+    if (t.type === 'operator') {
+      const prevIsBinOp = prev && prev.type === 'operator' && !L.postfix.includes(prev.value);
+      if (prevIsBinOp && !L.unary.includes(t.value) && !cppPtr(prev, t))
+        warn(`${prev.value}${t.value}`, t, `Operadores seguidos "${prev.value}" y "${t.value}": los dos son tokens válidos, pero la gramática no permite que un operador binario vaya justo después de otro. ¡Es como decir "veinte más por cinco"! 🤯`);
+      else if (langKey === 'cpp' && prevIsBinOp && ['*','&'].includes(t.value) && next && next.type === 'number')
+        warn(`${prev.value}${t.value}`, t, `"${prev.value}" seguido de "${t.value}${next.value}": no se puede usar "${t.value}" sobre un número literal. Los tokens son válidos, pero la estructura no tiene sentido.`);
+      if (!prev && !L.unary.includes(t.value) && !pyStar(prev, t))
+        warn(t.value, t, `El código empieza con el operador "${t.value}", que necesita un operando a su izquierda. ¿Multiplicar qué cosa? 🤔`);
+      const closes = !next || (next.type === 'delimiter' && [')',']','}',';',','].includes(next.value));
+      if (!L.postfix.includes(t.value) && closes && !cppPtr(t, next) && !pyStar(prev, t))
+        warn(t.value, t, `El operador "${t.value}" se queda esperando un operando a su derecha que nunca llega. 🕳️`);
+    }
+    if (t.type === 'number' && next && next.line === t.line && ['number','identifier','string'].includes(next.type))
+      warn(`${t.value} ${next.value}`, next, `Dos operandos seguidos sin operador: "${t.value}" y "${next.value}". Cada uno es válido por separado, pero juntos no forman una expresión.`);
+  });
+  stack.forEach(t => warn(t.value, t, `"${t.value}" se abrió en la línea ${t.line} y nunca se cerró.`));
+  return warns;
+}
+
+/* =====================================================================
+   4. INTERFAZ
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+let currentLang = 'python';
+
+const EXAMPLES = {
+  common: [
+    { label: '🚨 @ suelto', code: '@' },
+    { label: '🪤 Trampa: 20+*5', code: '20+*5' },
+    { label: '🔢 123abc', code: '123abc = 10' },
+    { label: '🧩 (20 + 5', code: 'resultado = (20 + 5' }
+  ],
+  python: [
+    { label: '✅ Código válido', code: 'def saludar(nombre):\n    mensaje = f"Hola, {nombre}!"\n    return mensaje\n\nedad = 20 + 5 * 2\nprint(saludar("Detective"), edad)' },
+    { label: '💀 Caos', code: 'precio = $20\nnombre = “Ana”\nif edad ! 18:\n    print("listo") 🚀' }
+  ],
+  javascript: [
+    { label: '✅ Código válido', code: 'const saludar = (nombre) => `Hola, ${nombre}!`;\nlet total = 20 + 5 * 2;\nconsole.log(saludar("Detective"), total);' },
+    { label: '💀 Caos', code: 'let correo = usuario@dominio;\nlet x = 5 # 3;\nconsole.log(“hola”);' }
+  ],
+  cpp: [
+    { label: '✅ Código válido', code: '#include <iostream>\nusing namespace std;\n\nint main() {\n    int total = 20 + 5 * 2;\n    cout << "Total: " << total << endl;\n    return 0;\n}' },
+    { label: '💀 Caos', code: 'int $precio = 20;\nint x = 5 @ 3;\ncout << `hola`;' }
+  ]
+};
+
+function renderLangs() {
+  $('langs').innerHTML = Object.entries(LANGS).map(([k, L]) =>
+    `<button class="lang-btn ${k === currentLang ? 'active' : ''}" data-lang="${k}">${L.icon} ${L.label}</button>`).join('');
+  document.querySelectorAll('.lang-btn').forEach(b => b.onclick = () => { currentLang = b.dataset.lang; renderLangs(); renderExamples(); renderAlphabet(); });
+}
+
+function renderExamples() {
+  const list = [...EXAMPLES.common, ...EXAMPLES[currentLang]];
+  $('examples').innerHTML = list.map((e, i) => `<button class="chip-ex" data-i="${i}">${e.label}</button>`).join('');
+  document.querySelectorAll('.chip-ex').forEach(b => b.onclick = () => { $('code').value = list[b.dataset.i].code; updateGutter(); analyze(); });
+}
+
+function renderAlphabet() {
+  const L = LANGS[currentLang];
+  const span = arr => arr.map(s => `<span>${esc(s)}</span>`).join('');
+  $('alphabet').innerHTML = `
+    <div class="alpha-row"><div class="lbl">Letras y dígitos</div><div class="sym-list">${span(['a–z','A–Z','0–9','_'].concat(currentLang === 'javascript' ? ['$'] : []))}</div></div>
+    <div class="alpha-row"><div class="lbl">Operadores</div><div class="sym-list">${span(L.operators.filter(o => o !== '#' && o !== '##').slice().sort((a, b) => a.length - b.length))}${currentLang === 'python' ? '<span>@ (decorador / matrices)</span>' : ''}</div></div>
+    <div class="alpha-row"><div class="lbl">Delimitadores · cadenas · comentarios</div><div class="sym-list">${span(L.delimiters)}${span(L.quotes)}${span([L.lineComment].concat(L.blockComment ? [L.blockComment.join(' … ')] : []))}${L.preprocessor ? '<span>#include…</span>' : ''}</div></div>
+    <div class="alpha-row"><div class="lbl">🚫 Fuera del alfabeto (error léxico)</div><div class="sym-list bad">${span(L.badSamples)}</div></div>`;
+}
+
+function updateGutter() {
+  const lines = $('code').value.split('\n').length;
+  $('gutter').textContent = Array.from({ length: lines }, (_, i) => i + 1).join('\n');
+}
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let busy = false;
+
+async function analyze() {
+  if (busy) return;
+  const code = $('code').value;
+  if (!code.trim()) { $('status').innerHTML = '⚠️ No hay evidencia que escanear. Escribe algo de código.'; return; }
+  busy = true;
+  const L = LANGS[currentLang];
+  const btn = $('scanBtn'), wrap = $('editorWrap');
+  btn.disabled = true; btn.textContent = '📡 ESCANEANDO…';
+  wrap.classList.add('scanning');
+  const phases = ['Leyendo flujo de caracteres…', `Comparando cada símbolo con el alfabeto Σ de ${L.label}…`, 'Construyendo tokens con autómatas finitos…', 'Revisión extra: inspeccionando la estructura…'];
+  for (const p of phases) { $('status').innerHTML = `<span class="dot"></span>${p}`; await sleep(450); }
+
+  const { tokens, errors } = lex(code, currentLang);
+  const warns = errors.length ? [] : syntaxCheck(tokens, currentLang);
+  wrap.classList.remove('scanning');
+  btn.disabled = false; btn.textContent = '🔎 ANALIZAR';
+  $('status').innerHTML = errors.length ? `🚨 Escaneo completo: se encontraron ${errors.length} símbolo(s) que no pertenecen al lenguaje.` : '✅ Escaneo completo.';
+  renderResults(code, tokens, errors, warns, L);
+  busy = false;
+}
+
+function renderResults(code, tokens, errors, warns, L) {
+  const sig = tokens.filter(t => !['ws','comment'].includes(t.type));
+  let lexCard, synCard;
+  if (errors.length) {
+    lexCard = `<div class="verdict bad"><div class="tag">ANÁLISIS LÉXICO</div><div class="big">🚨 ERROR LÉXICO</div>
+      <p>Se encontraron <b>${errors.length}</b> elemento(s) que <b>NO pertenecen</b> al lenguaje ${L.label}. El escáner no puede convertirlos en tokens.</p></div>`;
+    synCard = `<div class="verdict idle"><div class="tag">ANÁLISIS SINTÁCTICO</div><div class="big">⏸ EN ESPERA</div>
+      <p>El análisis sintáctico trabaja sobre tokens válidos. Hasta que el código pase la revisión léxica, no tiene sentido revisar su estructura.</p></div>`;
+  } else {
+    lexCard = `<div class="verdict ok"><div class="tag">ANÁLISIS LÉXICO</div><div class="big">✅ SIN ERRORES LÉXICOS</div>
+      <p>Todos los caracteres <b>pertenecen</b> al alfabeto de ${L.label}: se formaron <b>${sig.length}</b> tokens válidos.</p></div>`;
+    synCard = warns.length
+      ? `<div class="verdict warn"><div class="tag">ANÁLISIS SINTÁCTICO (bonus)</div><div class="big">🤡 ¡ESTRUCTURA ROTA!</div>
+          <p>Léxicamente está impecable, pero el <b>orden</b> de los tokens es un desastre. Eso es un <b>error sintáctico</b>, no léxico. ¡Buen intento, pero a este detective no lo engañas! 🕵️</p></div>`
+      : `<div class="verdict ok"><div class="tag">ANÁLISIS SINTÁCTICO (bonus)</div><div class="big">👍 ESTRUCTURA OK</div>
+          <p>La revisión básica no encontró problemas de orden (operadores seguidos, paréntesis sin cerrar, etc.).</p></div>`;
+  }
+
+  const issues = errors.map((e, i) => {
+    const shown = e.value.length > 30 ? e.value.slice(0, 30) + '…' : e.value;
+    const cp = [...e.value][0];
+    return `<div class="issue" style="animation-delay:${i * 80}ms">
+      <div class="head">❌ ${esc(e.title)} <span class="sym">${esc(shown)}</span><span class="where">línea ${e.line}, col ${e.col}${e.delta ? ` · U+${cp.codePointAt(0).toString(16).toUpperCase().padStart(4, '0')}` : ''}</span></div>
+      <div class="body">${esc(e.detail)}</div>
+      ${e.delta ? `<div class="delta">δ(q₀, '${esc(cp)}') = ∅  →  q_error (no existe transición en el autómata de ${L.label})</div>` : ''}</div>`;
+  }).join('') + warns.map((w, i) => `<div class="issue syn" style="animation-delay:${i * 80}ms">
+      <div class="head">⚠️ Problema de estructura <span class="sym">${esc(w.sym)}</span><span class="where">línea ${w.line}, col ${w.col}</span></div>
+      <div class="body">${esc(w.msg)}</div></div>`).join('');
+
+  // Vista resaltada línea por línea
+  const errLines = new Set(errors.map(e => e.line));
+  let html = '';
+  for (const t of tokens) {
+    const cls = t.type === 'ws' ? '' : `t-${t.type}`;
+    const title = t.type === 'error' ? ` title="${esc(t.title)}"` : '';
+    html += t.type === 'ws' ? esc(t.value) : t.value.split('\n').map(part => `<span class="${cls}"${title}>${esc(part)}</span>`).join('\n');
+  }
+  const view = html.split('\n').map((ln, i) => `<div class="ln ${errLines.has(i + 1) ? 'has-err' : ''}"><span class="n">${i + 1}</span><span class="c">${ln || ' '}</span></div>`).join('');
+
+  // Fichas de tokens
+  const MAX = 250;
+  const chips = sig.slice(0, MAX).map((t, i) => `<div class="tok k-${t.type}" style="animation-delay:${Math.min(i * 25, 1500)}ms">${esc(t.value.length > 22 ? t.value.slice(0, 22) + '…' : t.value)}<small>${TYPE_LABEL[t.type]}</small></div>`).join('')
+    + (sig.length > MAX ? `<div class="tok k-delimiter">+${sig.length - MAX} más</div>` : '');
+
+  const counts = {};
+  sig.forEach(t => counts[t.type] = (counts[t.type] || 0) + 1);
+  const stats = Object.entries(counts).map(([k, v]) => `<div class="stat"><b style="${k === 'error' ? 'color:var(--red)' : ''}">${v}</b>${TYPE_LABEL[k]}</div>`).join('');
+
+  $('results').innerHTML = `
+    <div class="verdicts">${lexCard}${synCard}</div>
+    ${issues ? `<div class="section-title">🗂️ Pistas encontradas</div>${issues}` : ''}
+    <div class="section-title">🛰️ Vista del escáner (los símbolos ajenos parpadean en rojo)</div>
+    <div class="scanview">${view}</div>
+    <div class="section-title">🧱 Flujo de tokens reconocidos</div>
+    <div class="tokens">${chips || '<span style="color:var(--muted)">Sin tokens.</span>'}</div>
+    <div class="section-title">📊 Estadísticas</div>
+    <div class="stats">${stats}</div>`;
+}
+
+/* ---------- Fondo de estrellas ---------- */
+(function stars() {
+  const cv = $('stars'), ctx = cv.getContext('2d');
+  let W, H, pts;
+  const init = () => {
+    W = cv.width = innerWidth; H = cv.height = innerHeight;
+    pts = Array.from({ length: Math.floor(W * H / 5000) }, () => ({ x: Math.random() * W, y: Math.random() * H, r: Math.random() * 1.4 + .2, s: Math.random() * .3 + .05, a: Math.random() }));
+  };
+  const draw = () => {
+    ctx.clearRect(0, 0, W, H);
+    for (const p of pts) {
+      p.y += p.s; if (p.y > H) { p.y = 0; p.x = Math.random() * W; }
+      p.a += (Math.random() - .5) * .08; p.a = Math.max(.15, Math.min(1, p.a));
+      ctx.fillStyle = `rgba(200,230,255,${p.a})`; ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 7); ctx.fill();
+    }
+    requestAnimationFrame(draw);
+  };
+  addEventListener('resize', init); init(); draw();
+})();
+
+/* ---------- Eventos ---------- */
+$('code').addEventListener('input', updateGutter);
+$('code').addEventListener('scroll', () => $('gutter').scrollTop = $('code').scrollTop);
+$('code').addEventListener('keydown', e => {
+  if ((e.ctrlKey || e.metaKey) && e.key === 'Enter') { e.preventDefault(); analyze(); }
+  if (e.key === 'Tab') { e.preventDefault(); const t = e.target, s = t.selectionStart; t.setRangeText('    ', s, t.selectionEnd, 'end'); updateGutter(); }
+});
+$('scanBtn').onclick = analyze;
+$('clearBtn').onclick = () => { $('code').value = ''; updateGutter(); $('status').textContent = ''; };
+
+renderLangs(); renderExamples(); renderAlphabet(); updateGutter();
+
+// Exponer para pruebas automáticas
+window.__lex = lex; window.__syntax = syntaxCheck;
+</script>
+</body>
+</html>
